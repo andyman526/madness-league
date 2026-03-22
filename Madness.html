@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>March Madness Fantasy</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+body { margin:0; font-family:-apple-system; background:#f2f2f7; }
+header { padding:15px; text-align:center; font-weight:600; background:white; }
+
+.screen {
+  position:absolute; top:60px; bottom:60px; width:100%;
+  overflow:auto; transform:translateX(100%);
+  transition:.3s;
+}
+.screen.active { transform:translateX(0); }
+
+.card {
+  background:white; margin:10px; padding:15px;
+  border-radius:16px;
+}
+
+.tabbar {
+  position:fixed; bottom:0; width:100%; display:flex;
+  background:white; border-top:1px solid #ddd;
+}
+.tabbar div { flex:1; text-align:center; padding:10px; }
+.active-tab { color:#007aff; font-weight:600; }
+
+button {
+  margin:10px; padding:10px; border-radius:10px; border:none;
+  background:#007aff; color:white;
+}
+</style>
+</head>
+<body>
+<header>🏀 Fantasy March Madness</header>
+<div id="leaderboard" class="screen active"></div>
+<div id="roster" class="screen"></div>
+<div id="chartScreen" class="screen">
+  <canvas id="chart"></canvas>
+</div>
+<div class="tabbar">
+  <div onclick="switchTab('leaderboard')" class="active-tab">🏆</div>
+  <div onclick="switchTab('roster')">📋</div>
+  <div onclick="switchTab('chartScreen')">📊</div>
+</div>
+<script type="module">
+// ---------------- FIREBASE ----------------
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+import {
+  getFirestore, doc, setDoc, getDoc, getDocs, collection
+} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyC8ZE1HyZ38YH_P3mI4BhNQVsYJZa0hBso”,
+  authDomain: "march-madness-league.firebaseapp.com",
+  projectId: "march-madness-league"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+// ---------------- USER ----------------
+let user = localStorage.getItem("user") || prompt("Enter team name:");
+localStorage.setItem("user", user);
+
+let leagueCode = localStorage.getItem("leagueCode");
+
+// ---------------- UI ----------------
+function switchTab(id) {
+  document.querySelectorAll(".screen").forEach(s=>s.classList.remove("active"));
+  document.getElementById(id).classList.add("active");
+}
+
+// ---------------- CREATE / JOIN LEAGUE ----------------
+async function createLeague() {
+  const code = Math.random().toString(36).substring(2,7).toUpperCase();
+  await setDoc(doc(db,"leagues",code),{createdBy:user});
+  localStorage.setItem("leagueCode",code);
+  alert("League Code: "+code);
+  init();
+}
+
+async function joinLeague() {
+  const code = prompt("Enter league code:");
+  const snap = await getDoc(doc(db,"leagues",code));
+  if (!snap.exists()) return alert("Invalid code");
+  localStorage.setItem("leagueCode",code);
+  init();
+}
+
+// ---------------- FETCH GAMES ----------------
+async function getGames() {
+  const res = await fetch("https://site.api.espn.com/apis/v2/sports/basketball/mens-college-basketball/scoreboard");
+  const data = await res.json();
+  return data.events;
+}
+
+// ---------------- SCORING ----------------
+const SEED_VALUES = {1:1,2:1.5,3:2,4:2.5,5:3,6:3.5,7:4,8:4.5,9:5,10:5.5,11:6,12:6.5,13:7,14:7.5,15:8,16:9};
+const ROUND_MULT = {1:1,2:2,3:4,4:8,5:16,6:24};
+
+function scoreGame(game, pick) {
+  if (game.status.type.name !== "STATUS_FINAL") return 0;
+
+  const [a,b] = game.competitions[0].competitors;
+  const winner = a.score>b.score?a:b;
+  const loser = winner===a?b:a;
+
+  if (winner.team.displayName !== pick) return 0;
+
+  const seed = parseInt(winner.seed);
+  const opp = parseInt(loser.seed);
+  const diff = Math.abs(seed-opp);
+
+  let pts = SEED_VALUES[seed]*ROUND_MULT[game.competitions[0].round||1];
+
+  if (seed>opp) pts+=diff; else pts-=diff;
+  if (diff>=3) pts+=SEED_VALUES[seed];
+
+  return pts;
+}
+
+// ---------------- SAVE PICK ----------------
+async function savePick(seed,team) {
+  await setDoc(doc(db,"leagues",leagueCode,"teams",user),{[seed]:team},{merge:true});
+  init();
+}
+
+// ---------------- LEADERBOARD ----------------
+async function renderLeaderboard(games) {
+  const snap = await getDocs(collection(db,"leagues",leagueCode,"teams"));
+  const league = {};
+  snap.forEach(d=>league[d.id]=d.data());
+
+  let html="<button onclick='createLeague()'>Create League</button>";
+  html+="<button onclick='joinLeague()'>Join League</button>";
+
+  const scores = Object.keys(league).map(name=>{
+    let total=0;
+    games.forEach(g=>{
+      const teams=g.competitions[0].competitors;
+      teams.forEach(t=>{
+        const seed=parseInt(t.seed);
+        if (league[name][seed]===t.team.displayName) {
+          total+=scoreGame(g,t.team.displayName);
+        }
+      });
+    });
+    return {name,score:total};
+  });
+
+  scores.sort((a,b)=>b.score-a.score);
+
+  scores.forEach((s,i)=>{
+    html+=`<div class="card"><b>#${i+1} ${s.name}</b><br>${s.score} pts</div>`;
+  });
+
+  document.getElementById("leaderboard").innerHTML=html;
+}
+
+// ---------------- ROSTER ----------------
+async function renderRoster(games) {
+  const container=document.getElementById("roster");
+  container.innerHTML="";
+
+  const teams=games.flatMap(g=>g.competitions[0].competitors);
+
+  for(let seed=1;seed<=16;seed++){
+    const card=document.createElement("div");
+    card.className="card";
+    card.innerHTML="<b>Seed "+seed+"</b>";
+
+    teams.filter(t=>parseInt(t.seed)===seed).forEach(t=>{
+      const div=document.createElement("div");
+      div.innerText=t.team.displayName;
+      div.onclick=()=>savePick(seed,t.team.displayName);
+      card.appendChild(div);
+    });
+
+    container.appendChild(card);
+  }
+}
+
+// ---------------- INIT ----------------
+async function init() {
+  if (!leagueCode) {
+    createLeague();
+    return;
+  }
+
+  const games=await getGames();
+
+  renderLeaderboard(games);
+  renderRoster(games);
+}
+
+init();
+</script>
+</body>
+</html>
