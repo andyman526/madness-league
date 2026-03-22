@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>March Madness Fantasy 2026</title>
+<style>
+body { font-family:-apple-system,sans-serif; background:#f2f2f7; margin:0; padding:0; }
+header { text-align:center; padding:15px; font-weight:bold; background:#fff; }
+.container { padding:10px; max-width:600px; margin:auto; }
+input,button { padding:10px; margin:5px 0; width:100%; font-size:1em; }
+button { border:none; border-radius:5px; }
+.team-btn { background:#007aff; color:white; margin:3px; padding:8px; border-radius:5px; }
+.team-btn.selected { background:#34c759; }
+.undo-btn { background:#ff3b30;color:white; }
+#draftSection, #summarySection { display:none; margin-top:10px; }
+#tournamentBracket button { margin:2px; padding:5px; }
+</style>
+</head>
+<body>
+<header>March Madness Fantasy 2026</header>
+<div class="container">
+
+<input type="text" id="playerName" placeholder="Your Name">
+<button id="addPlayerBtn">Add Player</button>
+<button id="quickPickBtn">Quick Pick</button>
+
+<div id="draftSection">
+<h3 id="seedTitle"></h3>
+<div id="teamButtons"></div>
+<button id="undoBtn" class="undo-btn">Undo Last Pick</button>
+</div>
+
+<div id="summarySection">
+<h3>Draft Summary</h3>
+<div id="summaryList"></div>
+<button id="confirmDraftBtn">Confirm Draft</button>
+</div>
+
+<h3>Enter Tournament Results</h3>
+<div id="tournamentBracket"></div>
+
+<h3>Leaderboard</h3>
+<table id="leaderboard">
+<thead><tr><th>Player</th><th>Points</th></tr></thead>
+<tbody></tbody>
+</table>
+
+<script>
+document.addEventListener("DOMContentLoaded", function(){
+
+// ================== CONFIG ==================
+const seeds = Array.from({length:16},(_,i)=>i+1);
+const regions = {
+"East":["Duke","UConn","Michigan State","Kansas","St. John's","Louisville","UCLA","Ohio State","TCU","UCF","South Florida","Northern Iowa","California Baptist","North Dakota State","Furman","Siena"],
+"Midwest":["Michigan","Iowa State","Virginia","Alabama","Texas Tech","Tennessee","Kentucky","Georgia","Saint Louis","Santa Clara","Miami (OH)/SMU","Akron","Hofstra","Wright State","Tennessee State","UMBC/Howard"],
+"South":["Florida","Houston","Illinois","Nebraska","Vanderbilt","North Carolina","Saint Mary's","Clemson","Iowa","Texas A&M","VCU","McNeese","Troy","Penn","Idaho","Prairie View A&M/Lehigh"],
+"West":["Arizona","Purdue","Gonzaga","Arkansas","Wisconsin","BYU","Miami (FL)","Villanova","Utah State","Missouri","Texas/NC State","High Point","Hawai’i","Kennesaw State","Queens","Long Island (LIU)"]
+};
+const seedValues={1:1,2:1.5,3:2,4:2.5,5:3,6:3.5,7:4,8:4.5,9:5,10:5.5,11:6,12:6.5,13:7,14:7.5,15:8,16:9};
+const roundMultipliers={R64:1,R32:2,S16:4,E8:8,F4:16,Title:24};
+
+// ================== STATE ==================
+let players={};
+let currentPlayer="";
+let currentSeedIndex=0;
+let draftPicks={};
+let draftHistory=[];
+let tournamentState = {}; // store winners by round
+
+// ================== DRAFT FUNCTIONS ==================
+function addPlayer(){
+  const name=document.getElementById("playerName").value.trim();
+  if(!name){alert("Enter a name!"); return;}
+  if(players[name]){alert("Player exists!"); return;}
+  currentPlayer=name;
+  draftPicks={}; draftHistory=[]; currentSeedIndex=0;
+  document.getElementById("draftSection").style.display="block";
+  document.getElementById("summarySection").style.display="none";
+  showSeed();
+}
+
+function showSeed(){
+  if(currentSeedIndex>=seeds.length){showSummary(); return;}
+  const seed = seeds[currentSeedIndex];
+  const btnDiv = document.getElementById("teamButtons");
+  btnDiv.innerHTML="";
+  Object.values(regions).forEach(region=>{
+    const team = region[seed-1];
+    const btn = document.createElement("button");
+    btn.className="team-btn"; btn.innerText=team;
+    btn.addEventListener("click", ()=> selectTeam(seed,team,btn));
+    btnDiv.appendChild(btn);
+  });
+  document.getElementById("seedTitle").innerText = `${currentPlayer} - Pick a team for Seed ${seed}`;
+}
+
+function selectTeam(seed,team,btn){
+  draftPicks[seed]=team; draftHistory.push(seed);
+  Array.from(document.querySelectorAll(".team-btn")).forEach(b=>b.classList.remove("selected"));
+  btn.classList.add("selected"); currentSeedIndex++; showSeed();
+}
+
+function undoPick(){ 
+  if(draftHistory.length===0){alert("No picks to undo."); return;}
+  const lastSeed=draftHistory.pop(); delete draftPicks[lastSeed]; currentSeedIndex=lastSeed-1; showSeed();
+}
+
+function quickPick(){
+  const name=document.getElementById("playerName").value.trim();
+  if(!name){alert("Enter a name!"); return;}
+  draftPicks={}; seeds.forEach(s=>{
+    const teams = Object.values(regions).map(r=>r[s-1]);
+    draftPicks[s]=teams[Math.floor(Math.random()*teams.length)];
+  });
+  players[name] = {...draftPicks};
+  alert(`${name} Quick Pick complete!`); renderLeaderboard();
+}
+
+function showSummary(){
+  document.getElementById("draftSection").style.display="none";
+  document.getElementById("summarySection").style.display="block";
+  const summary=document.getElementById("summaryList"); summary.innerHTML="";
+  seeds.forEach(s=>{
+    const p=document.createElement("p"); p.innerText=`Seed ${s}: ${draftPicks[s]}`;
+    summary.appendChild(p);
+  });
+}
+
+function confirmDraft(){ 
+  players[currentPlayer]={...draftPicks};
+  alert(`${currentPlayer}'s draft confirmed!`); 
+  document.getElementById("summarySection").style.display="none";
+  renderLeaderboard(); 
+  renderBracket();
+}
+
+// ================== LEADERBOARD ==================
+function renderLeaderboard(){
+  const tbody=document.querySelector("#leaderboard tbody"); tbody.innerHTML="";
+  for(let p in players){ tbody.innerHTML += `<tr><td>${p}</td><td>${calculateScore(p)}</td></tr>`; }
+}
+
+// ================== OFFICIAL BRACKET ==================
+const firstRoundMatchups = {
+  East: [["Duke","Siena"],["Ohio State","TCU"],["St. John's","Northern Iowa"],["Kansas","Cal Baptist"],
+         ["Louisville","South Florida"],["Michigan State","North Dakota State"],["UCLA","UCF"],["UConn","Furman"]],
+  Midwest: [["Michigan","Howard"],["Iowa State","Tennessee State"],["Virginia","Wright State"],["Alabama","Akron"],
+            ["Texas Tech","Hofstra"],["Tennessee","Miami (OH)/SMU"],["Kentucky","Saint Louis"],["Georgia","Santa Clara"]],
+  South: [["Florida","Prairie View A&M/Lehigh"],["Houston","Idaho"],["Illinois","Penn"],["Nebraska","Troy"],
+          ["Vanderbilt","McNeese"],["North Carolina","VCU"],["Saint Mary's","Clemson"],["Iowa","Texas A&M"]],
+  West: [["Arizona","Long Island (LIU)"],["Purdue","Queens"],["Gonzaga","Kennesaw State"],["Arkansas","Hawai’i"],
+         ["Wisconsin","High Point"],["BYU","Texas/NC State"],["Miami (FL)","Villanova"],["Utah State","Missouri"]]
+};
+
+const regionsOrder = ["East","Midwest","South","West"];
+
+function renderBracket(){
+  const bracketDiv=document.getElementById("tournamentBracket"); 
+  bracketDiv.innerHTML="";
+  tournamentState={};
+
+  regionsOrder.forEach(region=>{
+    const regionDiv=document.createElement("div"); 
+    regionDiv.style.border="1px solid #ccc"; 
+    regionDiv.style.marginBottom="10px"; 
+    regionDiv.style.borderRadius="5px"; 
+    regionDiv.style.padding="5px"; 
+    regionDiv.style.background="#fff";
+
+    const header = document.createElement("button");
+    header.innerText = region;
+    header.style.width="100%";
+    header.style.padding="8px";
+    header.style.fontWeight="bold";
+    header.style.background="#007aff";
+    header.style.color="white";
+    header.style.border="none";
+    header.style.borderRadius="5px";
+    header.style.marginBottom="5px";
+
+    const regionContent = document.createElement("div");
+    regionContent.style.display="block";
+
+    header.addEventListener("click", ()=> {
+      regionContent.style.display = regionContent.style.display==="none" ? "block":"none";
+    });
+
+    // first round matches
+    const matches = firstRoundMatchups[region];
+
+    matches.forEach((match,i)=>{
+      const matchDiv = document.createElement("div");
+      matchDiv.style.margin="5px 0";
+
+      const btn1=document.createElement("button");
+      btn1.innerText=match[0]; btn1.style.marginRight="5px"; btn1.style.padding="5px";
+      const btn2=document.createElement("button");
+      btn2.innerText=match[1]; btn2.style.padding="5px";
+
+      // highlight if drafted by current player
+      if(players[currentPlayer] && Object.values(players[currentPlayer]).includes(match[0])){
+        btn1.style.border="2px solid #34c759";
+      }
+      if(players[currentPlayer] && Object.values(players[currentPlayer]).includes(match[1])){
+        btn2.style.border="2px solid #34c759";
+      }
+
+      const handleClick=(winner,loser,btnWinner,btnLoser)=>{
+        tournamentState[winner]={round:"R64"};
+        btnWinner.style.background="#34c759";
+        btnLoser.style.background="#ff3b30";
+        btnWinner.disabled=true; btnLoser.disabled=true;
+        renderLeaderboard();
+      }
+
+      btn1.addEventListener("click", ()=> handleClick(match[0],match[1],btn1,btn2));
+      btn2.addEventListener("click", ()=> handleClick(match[1],match[0],btn2,btn1));
+
+      matchDiv.appendChild(btn1); matchDiv.appendChild(btn2); regionContent.appendChild(matchDiv);
+    });
+
+    regionDiv.appendChild(header); regionDiv.appendChild(regionContent); bracketDiv.appendChild(regionDiv);
+  });
+}
+
+// ================== SCORING ==================
+function calculateScore(player){
+  let total=0;
+  const draft=players[player]; if(!draft) return total;
+  Object.keys(tournamentState).forEach(team=>{
+    const seedEntry = Object.entries(draft).find(([s,t])=>t===team);
+    if(seedEntry){
+      const seed = parseInt(seedEntry[0]);
+      const seedVal = seedValues[seed]||1;
+      const round = tournamentState[team].round;
+      const multiplier = roundMultipliers[round]||1;
+      total += seedVal*multiplier;
+    }
+  });
+  return total;
+}
+
+// ================== EVENT LISTENERS ==================
+document.getElementById("addPlayerBtn").addEventListener("click", addPlayer);
+document.getElementById("quickPickBtn").addEventListener("click", quickPick);
+document.getElementById("undoBtn").addEventListener("click", undoPick);
+document.getElementById("confirmDraftBtn").addEventListener("click", confirmDraft);
+
+});
+</script>
+</body>
+</html>
